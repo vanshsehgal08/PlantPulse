@@ -103,14 +103,47 @@ def main() -> None:
             if enable_camera:
                 camera = st.camera_input("Take a photo with your camera", label_visibility="collapsed")
                 if camera is not None:
-                    uploaded_files = list(uploaded_files or []) + [camera]
+                    # Store camera image in session state to persist across reruns
+                    st.session_state["_camera_image"] = camera
+                elif "_camera_image" in st.session_state:
+                    # Use previously captured camera image
+                    camera = st.session_state["_camera_image"]
+                else:
+                    camera = None
+                
+                # Add camera image to uploaded_files if available
+                if camera is not None:
+                    # Combine file uploader and camera images
+                    file_list = list(uploaded_files or [])
+                    # Only add camera if it's not already in the list
+                    if camera not in file_list:
+                        uploaded_files = file_list + [camera]
+                    else:
+                        uploaded_files = file_list
             else:
                 camera = None
+                # Clear camera image from session state when camera is disabled
+                if "_camera_image" in st.session_state:
+                    del st.session_state["_camera_image"]
 
             st.markdown("### Analyze")
             MIN_LEAF_CONFIDENCE_THRESHOLD = 0.85  
             MIN_HEALTHY_CONFIDENCE_THRESHOLD = 0.95 
             MAX_ENTROPY_THRESHOLD = 2.5  # Lower entropy = more confident = more likely to be leaf
+            
+            # Ensure camera image is included in uploaded_files before button check
+            if enable_camera and "_camera_image" in st.session_state:
+                camera_img = st.session_state["_camera_image"]
+                if camera_img is not None:
+                    file_list = list(uploaded_files or [])
+                    if camera_img not in file_list:
+                        uploaded_files = file_list + [camera_img]
+                    else:
+                        uploaded_files = file_list
+            
+            # Show info if no files available
+            if not uploaded_files:
+                st.info("📷 Please upload images or take a photo with the camera to analyze.")
             
             if st.button("Analyze", type="primary", use_container_width=True) and uploaded_files:
                 with st.spinner("Analyzing images... Please wait."):
