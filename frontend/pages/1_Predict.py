@@ -145,16 +145,19 @@ def main() -> None:
                     st.info("This may be due to memory constraints. Try uploading fewer images or smaller file sizes.")
                     st.stop()
 
-                # Ensure classes list matches model output shape
+                # Ensure probabilities match classes - truncate probabilities if model has more outputs
+                # Never pad classes with generic names - only use actual disease names
                 model_output_size = probs.shape[1] if len(probs.shape) > 1 else len(probs[0])
                 if len(classes) != model_output_size:
-                    # Adjust classes to match model output
                     if len(classes) < model_output_size:
-                        # Pad classes if model has more outputs
-                        classes = classes + [f"Class_{i}" for i in range(len(classes), model_output_size)]
+                        # Model has more outputs than we have class names - truncate probabilities
+                        # Only use the first N predictions where N = number of class names
+                        probs = probs[:, :len(classes)]  # Truncate to match available class names
+                        st.info(f"⚠️ Model has {model_output_size} outputs, but only {len(classes)} class names available. Using first {len(classes)} classes.")
                     else:
-                        # Truncate classes if model has fewer outputs
+                        # We have more class names than model outputs - truncate classes
                         classes = classes[:model_output_size]
+                        st.info(f"⚠️ Model has {model_output_size} outputs, but {len(classes)} class names found. Using first {model_output_size} classes.")
 
                 records = []
                 for i, p in enumerate(probs):
@@ -217,22 +220,19 @@ def main() -> None:
                 # Normalize all probabilities ONCE and store them for consistency
                 normalized_probs_list = []
                 for p in probs:
-                    # Ensure p has the correct length
+                    # Ensure p matches classes length - truncate if needed, never pad
                     if len(p) != len(classes):
-                        # Truncate or pad to match classes length
                         if len(p) > len(classes):
+                            # Truncate to match available class names
                             p = p[:len(classes)]
                         else:
-                            # Pad with zeros if model output is shorter (shouldn't happen, but safety)
-                            p = np.pad(p, (0, len(classes) - len(p)), mode='constant', constant_values=0.0)
+                            # This shouldn't happen after our earlier truncation, but handle it
+                            st.warning(f"⚠️ Probability array length ({len(p)}) < classes length ({len(classes)})")
+                            classes = classes[:len(p)]  # Truncate classes instead
                     normalized_p = np.array([normalize_confidence(float(prob)) for prob in p])
-                    # Double-check length
+                    # Final check - should be same length now
                     if len(normalized_p) != len(classes):
-                        # Force match by truncating/padding
-                        if len(normalized_p) > len(classes):
-                            normalized_p = normalized_p[:len(classes)]
-                        else:
-                            normalized_p = np.pad(normalized_p, (0, len(classes) - len(normalized_p)), mode='constant', constant_values=0.0)
+                        normalized_p = normalized_p[:len(classes)]
                     normalized_probs_list.append(normalized_p.tolist())
                 
                 # Store results in session state so they persist when switching images
@@ -271,11 +271,18 @@ def main() -> None:
                         if len(norm_p) != expected_len:
                             # Recalculate if corrupted
                             p_normalized_stored[i] = np.array([normalize_confidence(float(prob)) for prob in probs[i]])
-                    # Ensure classes matches
+                    # Ensure classes matches - truncate if needed, never pad with generic names
                     if len(classes) != expected_len:
                         if len(classes) < expected_len:
-                            classes = list(classes) + [f"Class_{i}" for i in range(len(classes), expected_len)]
+                            # Truncate probabilities to match available class names
+                            for i in range(len(p_normalized_stored)):
+                                p_normalized_stored[i] = p_normalized_stored[i][:len(classes)]
+                            # Truncate raw probs too
+                            for i in range(len(probs)):
+                                if len(probs[i]) > len(classes):
+                                    probs[i] = probs[i][:len(classes)]
                         else:
+                            # Truncate classes to match probabilities
                             classes = list(classes)[:expected_len]
                 
                 with right:
@@ -316,12 +323,11 @@ def main() -> None:
                         p_normalized_sel = np.array([normalize_confidence(float(prob)) for prob in p_sel])
                     
                     if len(p_normalized_sel) != len(classes):
-                        # Use the length of probabilities (model output) as truth
-                        # Limit classes to match or pad probabilities
+                        # Truncate probabilities to match classes - never pad classes with generic names
                         if len(p_normalized_sel) > len(classes):
-                            # Model has more outputs than classes - use what we have
-                            classes_limited = classes + [f"Class_{i}" for i in range(len(classes), len(p_normalized_sel))]
-                            classes = classes_limited
+                            # Model has more outputs - only use first N where N = number of class names
+                            p_normalized_sel = p_normalized_sel[:len(classes)]
+                            p_sel = p_sel[:len(classes)]  # Also truncate raw probabilities
                         else:
                             # Model has fewer outputs - truncate classes
                             classes = classes[:len(p_normalized_sel)]
