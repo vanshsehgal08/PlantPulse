@@ -11,15 +11,21 @@ def get_paths() -> Tuple[Path, Path]:
     frontend_root = Path(__file__).resolve().parents[1]
     project_root = frontend_root.parent
 
-    # Model path preference: project_root/models → frontend/models
-    # Try multiple model file names
+    # Model path preference: ALWAYS use best_model.keras first
     candidate_model_paths = [
         project_root / "models" / "best_model.keras",
         frontend_root / "models" / "best_model.keras",
-        project_root / "models" / "my_model_24.keras",
-        frontend_root / "models" / "my_model_24.keras",
+
     ]
-    model_path = next((p for p in candidate_model_paths if p.exists()), candidate_model_paths[0])
+    # Find first existing model, prioritizing best_model.keras
+    model_path = None
+    for path in candidate_model_paths:
+        if path.exists():
+            model_path = path
+            break
+    
+    if model_path is None:
+        model_path = candidate_model_paths[0]  # Will raise error in load_tf_model
 
     # Data path preference: project_root/data/train → frontend/data/train
     candidate_train_dirs = [
