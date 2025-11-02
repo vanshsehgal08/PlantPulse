@@ -42,19 +42,53 @@ def list_class_names(train_dir: Path) -> List[str]:
         names = sorted([p.name for p in train_dir.iterdir() if p.is_dir()])
         if names:
             return names
+    # Fallback: Comprehensive list of all 38 PlantVillage classes
+    # This ensures the model can use all its outputs even if train_dir doesn't exist
     return [
         "Apple___Apple_scab",
         "Apple___Black_rot",
         "Apple___Cedar_apple_rust",
         "Apple___healthy",
+        "Blueberry___healthy",
+        "Cherry_(including_sour)___Powdery_mildew",
+        "Cherry_(including_sour)___healthy",
+        "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot",
+        "Corn_(maize)___Common_rust",
+        "Corn_(maize)___Northern_Leaf_Blight",
+        "Corn_(maize)___healthy",
+        "Grape___Black_rot",
+        "Grape___Esca_(Black_Measles)",
+        "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)",
+        "Grape___healthy",
+        "Orange___Haunglongbing_(Citrus_greening)",
+        "Peach___Bacterial_spot",
+        "Peach___healthy",
+        "Pepper,_bell___Bacterial_spot",
+        "Pepper,_bell___healthy",
+        "Potato___Early_blight",
+        "Potato___Late_blight",
+        "Potato___healthy",
+        "Raspberry___healthy",
+        "Soybean___healthy",
+        "Squash___Powdery_mildew",
+        "Strawberry___Leaf_scorch",
+        "Strawberry___healthy",
+        "Tomato___Bacterial_spot",
+        "Tomato___Early_blight",
+        "Tomato___Late_blight",
+        "Tomato___Leaf_Mold",
+        "Tomato___Septoria_leaf_spot",
+        "Tomato___Spider_mites Two-spotted_spider_mite",
+        "Tomato___Target_Spot",
+        "Tomato___Tomato_Yellow_Leaf_Curl_Virus",
+        "Tomato___Tomato_mosaic_virus",
+        "Tomato___healthy",
     ]
 
 
 def load_tf_model():
     import tensorflow as tf
     
-    # Memory optimization for production deployment
-    # Limit TensorFlow memory growth to prevent OOM errors
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         try:
@@ -64,11 +98,8 @@ def load_tf_model():
         except RuntimeError as e:
             print(f"GPU memory growth setup error: {e}")
     
-    # Limit CPU memory usage (important for Render free tier)
     try:
         tf.config.set_soft_device_placement(True)
-        # Set memory limit to prevent crashes (adjust based on available RAM)
-        # For 512MB instances, use smaller limit
         cpu_devices = tf.config.list_physical_devices('CPU')
         if cpu_devices:
             try:
@@ -77,10 +108,8 @@ def load_tf_model():
                     [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=400)]
                 )
             except Exception as mem_error:
-                # Memory limit setting may not be supported, continue anyway
                 print(f"Memory limit configuration not available: {mem_error}")
     except Exception as e:
-        # If memory configuration fails, continue anyway
         print(f"Memory configuration warning: {e}")
 
     model_path, _ = get_paths()
@@ -91,13 +120,10 @@ def load_tf_model():
             f"or 'frontend/models/'."
         )
     
-    # Load model with optimizations
     try:
         model = tf.keras.models.load_model(str(model_path), compile=False)
-        # Compile with optimizations
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     except Exception as e:
-        # Fallback to basic loading
         model = tf.keras.models.load_model(str(model_path))
     
     return model
