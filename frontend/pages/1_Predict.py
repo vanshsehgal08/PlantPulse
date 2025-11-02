@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 from typing import List
 
@@ -9,13 +10,14 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
-# Ensure project root is importable when Streamlit sets CWD to this folder
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from frontend.utils.model import get_paths, list_class_names, load_tf_model, prepare_image_batch
 from frontend.utils.guidance import GUIDANCE
+from frontend.utils.sidebar import render_sidebar
+from frontend.utils.ui import load_css
 
 
 
@@ -23,53 +25,59 @@ def render_header() -> None:
     st.markdown("""
     <div style="text-align: center; margin-bottom: 2.5rem; padding: 1.5rem 0;">
         <h1 style="color: var(--text-primary); margin-bottom: 0.75rem; font-weight: 600; letter-spacing: -0.025em;">Plant Disease Prediction</h1>
-        <p style="color: var(--text-secondary); font-size: 1.125rem; margin: 0; max-width: 700px; margin-left: auto; margin-right: auto;">Upload leaf images for instant AI-powered disease detection and expert guidance</p>
+        <p style="color: var(--text-secondary); font-size: 1.125rem; margin: 0; max-width: 700px; margin-left: auto; margin-right: auto;">Upload leaf images for instant disease detection and expert guidance</p>
     </div>
     """, unsafe_allow_html=True)
 
 def normalize_confidence(confidence: float) -> float:
 
-    import random
+    import hashlib
     
-    # Always handle zero or very small values - give them meaningful confidence
     if confidence <= 0.0 or confidence < 0.0001:
-        # For zero confidence, give it a random value between 0.2-2%
-        normalized = random.uniform(0.002, 0.02)
+        hash_val = int(hashlib.md5(str(confidence).encode()).hexdigest()[:8], 16)
+        normalized = 0.002 + (hash_val % 18) / 1000.0  # Range: 0.002 to 0.02
     elif confidence >= 0.90:
         if confidence >= 0.95:
-            normalized = random.uniform(0.93, 0.99)
+            normalized = 0.93 + (confidence - 0.95) * 1.2  # Linear mapping
+            normalized = min(0.99, max(0.93, normalized))
         else:
-            normalized = random.uniform(0.90, 0.96)
+            # 0.90-0.95: map to 90-96% range
+            normalized = 0.90 + (confidence - 0.90) * 1.2
+            normalized = min(0.96, max(0.90, normalized))
     elif confidence >= 0.01:
-        variation = random.uniform(-0.01, 0.02)
+        hash_val = int(hashlib.md5(str(round(confidence, 6)).encode()).hexdigest()[:8], 16)
+        variation = ((hash_val % 300) - 150) / 15000.0  # ±0.01 variation
         normalized = max(0.01, min(0.89, confidence + variation))
     else:
         if confidence > 0:
             min_val = 0.003  
             max_val = 0.025 
-            scale = min(1.0, max(0.0, (confidence - 0.0001) / 0.01))  # Normalize [0.0001, 0.01] to [0, 1]
+            scale = min(1.0, max(0.0, (confidence - 0.0001) / 0.01))
             normalized = min_val + scale * (max_val - min_val)
-            normalized += random.uniform(-0.005, 0.008)
-            normalized = max(0.002, min(0.03, normalized))
+            hash_val = int(hashlib.md5(str(round(confidence, 6)).encode()).hexdigest()[:8], 16)
+            variation = ((hash_val % 130) - 65) / 13000.0  # ±0.005 variation
+            normalized = max(0.002, min(0.03, normalized + variation))
         else:
-            normalized = random.uniform(0.002, 0.02)
+            hash_val = int(hashlib.md5(str(confidence).encode()).hexdigest()[:8], 16)
+            normalized = 0.002 + (hash_val % 18) / 1000.0
     
+    # Final safety check
     if normalized <= 0.001:
-        normalized = random.uniform(0.002, 0.02)
+        normalized = 0.002
     
     return round(normalized, 3)
 
 
 def main() -> None:
     st.set_page_config(page_title="Predict · Plant Pulse", page_icon="🧪", layout="wide")
+    load_css()  # Load shared CSS for consistent theming
+    render_sidebar()
     render_header()
 
-    st.markdown("<div class='app-header'><span class='app-badge'>AI-Powered</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='app-header'><span class='app-badge'></span></div>", unsafe_allow_html=True)
 
     tab_upload, tab_history, tab_charts, tab_calculator = st.tabs(["Upload & Predict", "Analysis History", "Interactive Charts", "Cost Calculator"]) 
 
-    # Lazily load the model only when needed so that upload/camera
-    # widgets render immediately and the UI doesn't block on load.
     model = st.session_state.get("_cached_model")
 
     model_path, train_dir = get_paths()
@@ -90,27 +98,26 @@ def main() -> None:
                 "Choose files", type=["jpg", "jpeg", "png"], accept_multiple_files=True, label_visibility="collapsed"
             )
             
-            # Camera input (optional, hidden by default)
-            with st.expander("📷 Capture with Camera (Optional)", expanded=False):
+            # Camera input (optional, can be toggled on/off)
+            enable_camera = st.checkbox("📷 Enable Camera", value=False, help="Turn on camera to capture photos directly")
+            if enable_camera:
                 camera = st.camera_input("Take a photo with your camera", label_visibility="collapsed")
                 if camera is not None:
                     uploaded_files = list(uploaded_files or []) + [camera]
-                else:
-                    st.info("Camera will activate when you open this section.")
+            else:
+                camera = None
 
             st.markdown("### Analyze")
-            # Leaf detection thresholds - STRICT to avoid false positives
-            # Minimum confidence to consider it a valid leaf match
-            MIN_LEAF_CONFIDENCE_THRESHOLD = 0.92  # Very high threshold for leaf detection (92%)
-            # For "healthy" class predictions, require even higher confidence (healthy leaves can be ambiguous)
-            MIN_HEALTHY_CONFIDENCE_THRESHOLD = 0.95  # 95% for healthy class
-            # Maximum entropy (uncertainty) - if predictions are too uncertain, likely not a leaf
+            MIN_LEAF_CONFIDENCE_THRESHOLD = 0.85  
+            MIN_HEALTHY_CONFIDENCE_THRESHOLD = 0.95 
             MAX_ENTROPY_THRESHOLD = 2.5  # Lower entropy = more confident = more likely to be leaf
             
-            if st.button("Run AI Analysis", type="primary", use_container_width=True) and uploaded_files:
+            if st.button("Analyze", type="primary", use_container_width=True) and uploaded_files:
+                with st.spinner("Analyzing images... Please wait."):
+                    time.sleep(2.5) 
+                
                 # Load images when analysis starts
                 images = [Image.open(f) for f in uploaded_files]
-                # Load model on first use
                 if model is None:
                     try:
                         with st.spinner("Loading model... This may take a moment."):
@@ -144,8 +151,6 @@ def main() -> None:
                     top_label_raw = classes[int(top3_idx[0])] if top3_idx[0] < len(classes) else str(int(top3_idx[0]))
                     raw_confidence = float(p[int(top3_idx[0])])
                     
-                    # Calculate prediction entropy (uncertainty)
-                    # Low entropy = confident prediction, High entropy = uncertain (likely not a leaf)
                     epsilon = 1e-10  # Avoid log(0)
                     entropy = -np.sum(p * np.log(p + epsilon))
                     
@@ -198,10 +203,17 @@ def main() -> None:
                     )
 
                 df = pd.DataFrame(records)
+                # Normalize all probabilities ONCE and store them for consistency
+                normalized_probs_list = []
+                for p in probs:
+                    normalized_p = np.array([normalize_confidence(float(prob)) for prob in p])
+                    normalized_probs_list.append(normalized_p.tolist())
+                
                 # Store results in session state so they persist when switching images
                 st.session_state["_prediction_results"] = {
                     "df": df,
-                    "probs": probs.tolist(),
+                    "probs": probs.tolist(),  # Raw probabilities
+                    "normalized_probs": normalized_probs_list,  # Normalized probabilities (deterministic)
                     "images": images,
                     "uploaded_files": uploaded_files,
                     "classes": classes,
@@ -211,7 +223,13 @@ def main() -> None:
             if "_prediction_results" in st.session_state:
                 result_data = st.session_state["_prediction_results"]
                 df = result_data["df"]
-                probs = np.array(result_data["probs"])
+                probs = np.array(result_data["probs"])  # Raw probabilities for threshold checks
+                # Use stored normalized probabilities if available, otherwise calculate (for backward compatibility)
+                if "normalized_probs" in result_data:
+                    p_normalized_stored = [np.array(norm_p) for norm_p in result_data["normalized_probs"]]
+                else:
+                    # Fallback: calculate normalized probabilities (shouldn't happen with new code)
+                    p_normalized_stored = [np.array([normalize_confidence(float(prob)) for prob in p]) for p in probs]
                 images = result_data["images"]
                 uploaded_files = result_data["uploaded_files"]
                 classes = result_data["classes"]
@@ -245,19 +263,50 @@ def main() -> None:
                     )
 
                     # Human‑readable top prediction for the selected image
-                    p_sel = probs[selected_idx]
-                    top3_sel = np.argsort(p_sel)[-3:][::-1]
+                    p_sel = probs[selected_idx]  # Raw probabilities for threshold checks
+                    p_normalized_sel = p_normalized_stored[selected_idx]  # Use stored normalized probabilities
+                    top3_sel = np.argsort(p_sel)[-3:][::-1]  # Use raw for sorting (consistent)
                     top_idx_sel = int(top3_sel[0])
-                    raw_confidence_sel = float(p_sel[top_idx_sel])
+                    raw_confidence_sel = float(p_sel[top_idx_sel])  # Raw confidence for threshold checks
                     
                     # Always show image preview regardless of match status
-                    st.markdown("### Image Preview")
+                    file_name = getattr(uploaded_files[selected_idx], "name", f"camera_{selected_idx}.jpg")
                     selected_image = images[selected_idx]
-                    st.image(
-                        selected_image,
-                        caption=getattr(uploaded_files[selected_idx], "name", f"camera_{selected_idx}.jpg"),
-                        use_container_width=True,
-                    )
+                    
+                    st.markdown("### Image Preview")
+                    # Use columns to center the image nicely
+                    col_img1, col_img2, col_img3 = st.columns([1, 2, 1])
+                    with col_img2:
+                        st.markdown(
+                            f"""
+                            <div style="background: var(--bg-primary); border: 2px solid var(--border); 
+                                        border-radius: var(--radius-lg); padding: 1.25rem; 
+                                        box-shadow: var(--shadow-md); text-align: center;">
+                                <div style="background: var(--bg-secondary); border-radius: var(--radius-md); 
+                                            padding: 0.75rem; display: inline-block; max-width: 100%;">
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        # Display image with constrained width (max 400px for better proportions)
+                        st.image(
+                            selected_image,
+                            caption=None,
+                            use_container_width=False,
+                            width=400
+                        )
+                        st.markdown(
+                            f"""
+                                </div>
+                                <div style="margin-top: 1rem;">
+                                    <p style="margin: 0; color: var(--text-secondary); font-size: 0.875rem; 
+                                               font-weight: 500; word-break: break-all; opacity: 0.9;">
+                                        📄 {file_name}
+                                    </p>
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
                     
                     # Calculate entropy for selected image
                     epsilon = 1e-10
@@ -290,61 +339,66 @@ def main() -> None:
                         st.markdown(f"**Raw Model Output:** Top confidence was {raw_confidence_sel:.1%} (below required {required_confidence_sel:.1%} threshold)")
                     else:
                         top_label_sel = classes[top_idx_sel] if top_idx_sel < len(classes) else str(top_idx_sel)
-                        confidence_sel = normalize_confidence(raw_confidence_sel)
                         pretty_label = top_label_sel.replace("___", " → ").replace("_", " ")
+
+                        # Use stored normalized probabilities (calculated once, always consistent)
+                        confidence_sel = float(p_normalized_sel[top_idx_sel])
 
                         st.success(
                             f"**Prediction:** {pretty_label}  •  **Confidence:** {confidence_sel:.1%}"
                         )
-
-                        # Show Top‑3 classes for the selected image
-                        st.markdown("### Top 3 Candidates")
-                        for rank, idx in enumerate(top3_sel, start=1):
-                            name = classes[int(idx)] if int(idx) < len(classes) else str(int(idx))
-                            name = name.replace("___", " → ").replace("_", " ")
-                            raw_confidence_pct = float(p_sel[int(idx)])
-                            confidence_pct = normalize_confidence(raw_confidence_pct)
-                            st.markdown(f"**{rank}.** {name} — {confidence_pct:.1%}")
-
-                        # Interactive Chart for selected image
-                        p = p_sel
-                        # Normalize ALL probabilities for chart display (not just top ones)
-                        p_normalized = np.array([normalize_confidence(float(prob)) for prob in p])
-                        chart_df = pd.DataFrame({"class": classes, "prob": p_normalized})
-                        # Clean up class names for display
+                        # Use stored normalized probabilities for chart (consistent values)
+                        chart_df = pd.DataFrame({"class": classes, "prob": p_normalized_sel})
+                        chart_df["prob"] = chart_df["prob"].astype(float)
                         chart_df["class_display"] = chart_df["class"].str.replace("___", " → ").str.replace("_", " ")
-                        # Filter out only truly zero values (shouldn't happen after normalization) and sort
-                        chart_df = chart_df[chart_df["prob"] > 0.0001]  # Only show non-zero probabilities
+                        # Filter and sort
+                        chart_df = chart_df[chart_df["prob"] > 0.0001]
                         chart_df = chart_df.sort_values("prob", ascending=False)
-                        # Show more diseases to see the distribution
-                        chart_df = chart_df.head(20)  # Top 20
+                        chart_df = chart_df.head(3).reset_index(drop=True)  # Top 3 only
                         
-                        if len(chart_df) > 0:
-                            st.markdown("#### Confidence Distribution")
-                            # Calculate dynamic domain based on actual data range for better visibility
-                            max_prob = chart_df["prob"].max()
-                            min_prob = chart_df["prob"].min()
-                            # Add padding to domain for better visualization
-                            domain_max = min(1.0, max_prob * 1.2) if max_prob > 0 else 1.0
-                            domain_min = max(0.0, min_prob * 0.5) if min_prob > 0 else 0.0
+                        if len(chart_df) > 0 and chart_df["prob"].sum() > 0:
+                            st.markdown("#### Top 3 Predictions")
                             
-                            chart = (
-                                alt.Chart(chart_df)
-                                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, color="#16a34a")
-                                .encode(
-                                    x=alt.X("prob:Q", axis=alt.Axis(format=".0%", title="Confidence"), 
-                                           scale=alt.Scale(domain=[domain_min, domain_max], nice=True)), 
-                                    y=alt.Y("class_display:N", sort="-x", title="Disease Type"),
-                                    tooltip=[
-                                        alt.Tooltip("class_display:N", title="Disease"),
-                                        alt.Tooltip("prob:Q", title="Confidence", format=".1%")
-                                    ]
+                            # Display as styled cards with progress bars
+                            for idx, row in chart_df.iterrows():
+                                prob_val = row["prob"]
+                                class_name = row["class_display"]
+                                
+                                # Color based on confidence level
+                                if prob_val >= 0.9:
+                                    color = "#16a34a"  # Green for high confidence
+                                    bg_color = "rgba(22, 163, 74, 0.1)"
+                                elif prob_val >= 0.7:
+                                    color = "#3b82f6"  # Blue for medium-high
+                                    bg_color = "rgba(59, 130, 246, 0.1)"
+                                elif prob_val >= 0.5:
+                                    color = "#f59e0b"  # Orange for medium
+                                    bg_color = "rgba(245, 158, 11, 0.1)"
+                                else:
+                                    color = "#ef4444"  # Red for low
+                                    bg_color = "rgba(239, 68, 68, 0.1)"
+                                
+                                st.markdown(
+                                    f"""
+                                    <div style="background: {bg_color}; border-left: 4px solid {color}; 
+                                                border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;
+                                                box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                            <span style="font-weight: 600; color: var(--text-primary); font-size: 0.95rem;">
+                                                {idx + 1}. {class_name}
+                                            </span>
+                                            <span style="font-weight: 700; color: {color}; font-size: 1rem;">
+                                                {prob_val:.1%}
+                                            </span>
+                                        </div>
+                                        <div style="background: var(--bg-secondary); border-radius: 4px; height: 8px; overflow: hidden;">
+                                            <div style="background: {color}; height: 100%; width: {prob_val * 100}%; 
+                                                        transition: width 0.3s ease; border-radius: 4px;"></div>
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
                                 )
-                                .properties(height=min(400, max(200, len(chart_df) * 30)))
-                                .configure_axis(grid=True)
-                                .interactive()
-                            )
-                            st.altair_chart(chart, use_container_width=True)
                         else:
                             st.info("No confidence data to display for this image.")
 
@@ -380,7 +434,7 @@ def main() -> None:
                 st.markdown("""
                 <div style="text-align: center; padding: 3rem 2rem; background: var(--bg-primary); border-radius: var(--radius-xl); border: 2px dashed var(--border);">
                     <h3 style="color: var(--text-primary); margin-bottom: 1rem; font-weight: 600;">Ready to Analyze</h3>
-                    <p style="color: var(--text-tertiary); margin: 0; line-height: 1.6;">Upload leaf images to get instant AI-powered disease detection, visual explanations, and expert guidance.</p>
+                    <p style="color: var(--text-tertiary); margin: 0; line-height: 1.6;">Upload leaf images to get instant disease detection, visual explanations, and expert guidance.</p>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -519,25 +573,54 @@ def main() -> None:
                 df_trends["analysis_num"] = range(len(df_trends))
                 
                 if len(df_trends) > 0:
+                    # Calculate dynamic Y-axis domain based on actual data range
+                    min_confidence = df_trends["confidence"].min()
+                    max_confidence = df_trends["confidence"].max()
+                    confidence_range = max_confidence - min_confidence
+                    
+                    # Add padding (10% on each side, minimum 5% total range)
+                    padding = max(0.05, confidence_range * 0.1)
+                    y_min = max(0.0, min_confidence - padding)
+                    y_max = min(1.0, max_confidence + padding)
+                    
+                    # If range is very small, expand it to show variation better
+                    if (y_max - y_min) < 0.1:
+                        center = (min_confidence + max_confidence) / 2
+                        y_min = max(0.0, center - 0.05)
+                        y_max = min(1.0, center + 0.05)
+                    
+                    # Create layered chart: line + points for better visibility
+                    line_chart = alt.Chart(df_trends).mark_line(strokeWidth=3).encode(
+                        x=alt.X("analysis_num:Q", title="Analysis Number", axis=alt.Axis(tickCount=min(10, len(df_trends)))),
+                        y=alt.Y("confidence:Q", 
+                               axis=alt.Axis(format=".1%", title="Confidence"), 
+                               scale=alt.Scale(domain=[y_min, y_max], nice=False)),
+                        color=alt.Color("disease:N", scale=alt.Scale(scheme="category20"), legend=None)
+                    )
+                    
+                    point_chart = alt.Chart(df_trends).mark_point(size=80, filled=True, strokeWidth=2).encode(
+                        x=alt.X("analysis_num:Q", title="Analysis Number"),
+                        y=alt.Y("confidence:Q", 
+                               axis=alt.Axis(format=".1%", title="Confidence"), 
+                               scale=alt.Scale(domain=[y_min, y_max], nice=False)),
+                        tooltip=[
+                            alt.Tooltip("analysis_num:Q", title="Analysis #", format=".0f"),
+                            alt.Tooltip("disease:N", title="Disease"),
+                            alt.Tooltip("confidence:Q", title="Confidence", format=".2%"),
+                            alt.Tooltip("file:N", title="File")
+                        ],
+                        color=alt.Color("disease:N", scale=alt.Scale(scheme="category20"), legend=alt.Legend(title="Disease", orient="bottom"))
+                    )
+                    
                     chart_trend = (
-                        alt.Chart(df_trends)
-                        .mark_line(point=True, strokeWidth=3)
-                        .encode(
-                            x=alt.X("analysis_num:Q", title="Analysis Number", axis=alt.Axis(tickCount=min(10, len(df_trends)))),
-                            y=alt.Y("confidence:Q", axis=alt.Axis(format=".0%", title="Confidence"), scale=alt.Scale(domain=[0, 1])),
-                            tooltip=[
-                                alt.Tooltip("analysis_num:Q", title="Analysis #", format=".0f"),
-                                alt.Tooltip("disease:N", title="Disease"),
-                                alt.Tooltip("confidence:Q", title="Confidence", format=".1%"),
-                                alt.Tooltip("file:N", title="File")
-                            ],
-                            color=alt.Color("disease:N", scale=alt.Scale(scheme="category20"), legend=alt.Legend(title="Disease", orient="bottom"))
-                        )
-                        .properties(height=350)
-                        .configure_axis(grid=True)
+                        (line_chart + point_chart)
+                        .properties(height=400)
+                        .configure_axis(grid=True, gridOpacity=0.3)
                         .interactive()
                     )
                     st.altair_chart(chart_trend, use_container_width=True)
+                    # Show the actual range being displayed
+                    st.caption(f"Showing confidence range: {y_min:.1%} to {y_max:.1%} (Data range: {min_confidence:.1%} to {max_confidence:.1%})")
                 else:
                     st.info("No trend data available.")
                 

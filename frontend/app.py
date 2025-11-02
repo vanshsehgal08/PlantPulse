@@ -3,6 +3,15 @@ import sys
 from pathlib import Path
 import streamlit as st
 
+# Ensure project root is importable first
+root = Path(__file__).resolve().parents[1]  # project root
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+# Import shared utilities
+from frontend.utils.sidebar import render_sidebar
+from frontend.utils.ui import load_css
+
 
 def configure_page() -> None:
     st.set_page_config(
@@ -11,16 +20,8 @@ def configure_page() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    # Inject custom CSS
-    css_path = os.path.join(os.path.dirname(__file__), "assets", "styles.css")
-    if os.path.exists(css_path):
-        with open(css_path, "r", encoding="utf-8") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-    # Ensure project root is importable
-    root = Path(__file__).resolve().parents[1]  # project root
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
+    # Load shared CSS for consistent theming
+    load_css()
 
 
 def render_home() -> None:
@@ -147,6 +148,7 @@ def render_home() -> None:
 
 def main() -> None:
     configure_page()
+    render_sidebar()
     render_home()
 
 

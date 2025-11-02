@@ -17,6 +17,7 @@
   --bg-secondary: #1a2332;
   --bg-tertiary: #252f43;
   --bg-elevated: #2d3849;
+  --bg-hover: #252f43;
   
   /* Text Colors */
   --text-primary: #f1f5f9;
@@ -102,6 +103,7 @@ section[data-testid="stSidebar"] > div,
 .css-1lcbmhc .css-1d391kg {
   background-color: var(--bg-secondary) !important;
   color: var(--text-primary) !important;
+  padding: 1rem !important;
 }
 
 nav[data-testid="stSidebarNav"],
@@ -113,6 +115,78 @@ nav[data-testid="stSidebarNav"] > div {
 .css-1rs6os,
 .css-1rs6os .css-1lcbmhc {
   background-color: var(--bg-secondary) !important;
+}
+
+/* Sidebar Navigation Links Hover Effect */
+section[data-testid="stSidebar"] a {
+  transition: all 0.2s ease !important;
+}
+
+section[data-testid="stSidebar"] a:hover {
+  background: var(--bg-hover) !important;
+  transform: translateX(4px) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* Sidebar Section Headers */
+section[data-testid="stSidebar"] h3 {
+  color: var(--text-primary) !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  margin-bottom: 0.75rem !important;
+  margin-top: 1rem !important;
+}
+
+/* Hide default Streamlit sidebar navigation completely */
+nav[data-testid="stSidebarNav"],
+nav[data-testid="stSidebarNav"] > div,
+nav[data-testid="stSidebarNav"] ul,
+nav[data-testid="stSidebarNav"] li,
+nav[data-testid="stSidebarNav"] a,
+section[data-testid="stSidebar"] nav[data-testid="stSidebarNav"],
+section[data-testid="stSidebar"] > div > nav,
+section[data-testid="stSidebar"] > div > div > nav,
+.css-17eq0hr,
+.css-1rs6os > nav,
+section[data-testid="stSidebar"] section:first-of-type,
+section[data-testid="stSidebar"] > div:first-child > nav {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Style Streamlit page_link buttons to match custom design */
+section[data-testid="stSidebar"] [data-testid="stPageLink-None"] {
+  background: var(--bg-primary) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 0.75rem 1rem !important;
+  margin-bottom: 0.5rem !important;
+  border: none !important;
+  transition: all 0.2s ease !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stPageLink-None"]:hover {
+  background: var(--bg-hover) !important;
+  transform: translateX(4px) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stPageLink-None"] a {
+  color: var(--text-primary) !important;
+  text-decoration: none !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  font-weight: 500 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stPageLink-None"] [data-testid="stPageLinkIcon"] {
+  margin-right: 0 !important;
 }
 
 /* Typography */

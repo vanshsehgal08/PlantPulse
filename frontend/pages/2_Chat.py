@@ -247,6 +247,14 @@ def ai_answer(model, messages: List[Dict[str, str]], detected_disease: Optional[
 def main() -> None:
     st.set_page_config(page_title="Chat · Plant Pulse", page_icon="💬", layout="wide")
     
+    # Load shared CSS for consistent theming
+    from frontend.utils.ui import load_css
+    load_css()
+    
+    # Import and render sidebar
+    from frontend.utils.sidebar import render_sidebar
+    render_sidebar()
+    
     # Custom CSS for better chat UI with carousel
     st.markdown("""
     <style>
