@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+ENV/
+env/
+
+# Streamlit
+.streamlit/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Model files (if too large for git)
+# Uncomment if models exceed git limits
+# *.keras
+# *.h5
+# *.pkl
+
+# Data directories (usually too large)
+data/
+test/
+
+# Logs
+*.log
+
+# Cache
+*.cache
+cache_training_data.*
+

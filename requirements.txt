@@ -1,0 +1,11 @@
+tensorflow
+numpy
+opencv-python
+streamlit
+Pillow
+scikit-learn
+altair
+pandas
+matplotlib
+openai
+google-generativeai
