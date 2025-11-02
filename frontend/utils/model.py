@@ -46,6 +46,36 @@ def list_class_names(train_dir: Path) -> List[str]:
 
 def load_tf_model():
     import tensorflow as tf
+    
+    # Memory optimization for production deployment
+    # Limit TensorFlow memory growth to prevent OOM errors
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Enable memory growth for GPU
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            print(f"GPU memory growth setup error: {e}")
+    
+    # Limit CPU memory usage (important for Render free tier)
+    try:
+        tf.config.set_soft_device_placement(True)
+        # Set memory limit to prevent crashes (adjust based on available RAM)
+        # For 512MB instances, use smaller limit
+        cpu_devices = tf.config.list_physical_devices('CPU')
+        if cpu_devices:
+            try:
+                tf.config.experimental.set_virtual_device_configuration(
+                    cpu_devices[0],
+                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=400)]
+                )
+            except Exception as mem_error:
+                # Memory limit setting may not be supported, continue anyway
+                print(f"Memory limit configuration not available: {mem_error}")
+    except Exception as e:
+        # If memory configuration fails, continue anyway
+        print(f"Memory configuration warning: {e}")
 
     model_path, _ = get_paths()
     if not model_path.exists():
@@ -54,7 +84,16 @@ def load_tf_model():
             f"or place a Keras model named 'best_model.keras' in either 'models/' at the project root "
             f"or 'frontend/models/'."
         )
-    model = tf.keras.models.load_model(str(model_path))
+    
+    # Load model with optimizations
+    try:
+        model = tf.keras.models.load_model(str(model_path), compile=False)
+        # Compile with optimizations
+        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    except Exception as e:
+        # Fallback to basic loading
+        model = tf.keras.models.load_model(str(model_path))
+    
     return model
 
 

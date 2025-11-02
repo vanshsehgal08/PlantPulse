@@ -87,15 +87,30 @@ def main() -> None:
                 # Load model on first use
                 if model is None:
                     try:
-                        with st.spinner("Loading model..."):
+                        with st.spinner("Loading model... This may take a moment."):
                             model = load_tf_model()
                             st.session_state["_cached_model"] = model
                     except Exception as e:  # pragma: no cover
-                        st.error(str(e))
+                        st.error(f"Model loading failed: {str(e)}")
+                        st.info("Please try refreshing the page or contact support if the issue persists.")
                         st.stop()
 
-                batch = prepare_image_batch(images)
-                probs = model.predict(batch, verbose=0)
+                # Limit batch size to prevent memory issues (max 5 images at once on free tier)
+                MAX_BATCH_SIZE = 5
+                if len(images) > MAX_BATCH_SIZE:
+                    st.warning(f"Processing {len(images)} images. Large batches may take longer. Processing first {MAX_BATCH_SIZE} images.")
+                    images = images[:MAX_BATCH_SIZE]
+                    uploaded_files = list(uploaded_files)[:MAX_BATCH_SIZE]
+
+                try:
+                    with st.spinner("Processing images with AI..."):
+                        batch = prepare_image_batch(images)
+                        # Use smaller batch size for prediction to save memory
+                        probs = model.predict(batch, verbose=0, batch_size=min(2, len(images)))
+                except Exception as e:
+                    st.error(f"Image processing failed: {str(e)}")
+                    st.info("This may be due to memory constraints. Try uploading fewer images or smaller file sizes.")
+                    st.stop()
 
                 records = []
                 for i, p in enumerate(probs):
@@ -184,45 +199,63 @@ def main() -> None:
                     )
                     st.altair_chart(chart, use_container_width=True)
 
-                    # Grad-CAM visualizations for all images
+                    # Grad-CAM visualizations for all images (limit to prevent memory issues)
                     st.markdown("#### AI Visual Insights")
                     st.markdown("**Grad-CAM Visualization:** Red areas indicate regions where the AI detected disease indicators")
                     
                     import matplotlib.cm as cm
+                    import gc
                     
-                    # Generate Grad-CAM for all images
-                    with st.spinner("Generating visual insights for all images..."):
-                        for img_idx in range(len(images)):
-                            img = images[img_idx]
-                            img_prob = probs[img_idx]
-                            top_idx_img = int(np.argmax(img_prob))
-                            top_label_img = classes[top_idx_img] if top_idx_img < len(classes) else str(top_idx_img)
-                            pretty_label_img = top_label_img.replace("___", " → ").replace("_", " ")
-                            confidence_img = float(img_prob[top_idx_img])
-                            
-                            # Get image name
-                            img_name = getattr(uploaded_files[img_idx], "name", f"camera_{img_idx}.jpg")
-                            
-                            # Create Grad-CAM visualization
-                            arr = np.asarray(img.convert("RGB").resize((128, 128)), dtype=np.float32) / 255.0
-                            heat = compute_gradcam(model, arr, top_idx_img)
-                            colored = (cm.jet(heat)[..., :3] * 255).astype(np.uint8)
-                            overlay = Image.fromarray(colored).resize(img.size)
-                            base = img.convert("RGBA").copy()
-                            overlay_rgba = overlay.convert("RGBA")
-                            overlay_rgba.putalpha(120)
-                            base.paste(overlay_rgba, (0, 0), overlay_rgba)
-                            
-                            # Display with prediction info
-                            st.markdown(f"**{img_name}** — {pretty_label_img} ({confidence_img:.1%})")
-                            st.image(
-                                [img, base],
-                                caption=["Original Image", "AI Heat Map"],
-                                use_container_width=True,
-                            )
-                            
-                            if img_idx < len(images) - 1:
-                                st.divider()
+                    # Limit Grad-CAM processing to prevent memory issues (max 3 images)
+                    max_gradcam = min(3, len(images))
+                    if len(images) > max_gradcam:
+                        st.info(f"Showing visual insights for first {max_gradcam} images to optimize performance.")
+                    
+                    # Generate Grad-CAM for limited images
+                    try:
+                        with st.spinner("Generating visual insights..."):
+                            for img_idx in range(max_gradcam):
+                                try:
+                                    img = images[img_idx]
+                                    img_prob = probs[img_idx]
+                                    top_idx_img = int(np.argmax(img_prob))
+                                    top_label_img = classes[top_idx_img] if top_idx_img < len(classes) else str(top_idx_img)
+                                    pretty_label_img = top_label_img.replace("___", " → ").replace("_", " ")
+                                    confidence_img = float(img_prob[top_idx_img])
+                                    
+                                    # Get image name
+                                    img_name = getattr(uploaded_files[img_idx], "name", f"camera_{img_idx}.jpg")
+                                    
+                                    # Create Grad-CAM visualization with error handling
+                                    arr = np.asarray(img.convert("RGB").resize((128, 128)), dtype=np.float32) / 255.0
+                                    heat = compute_gradcam(model, arr, top_idx_img)
+                                    colored = (cm.jet(heat)[..., :3] * 255).astype(np.uint8)
+                                    overlay = Image.fromarray(colored).resize(img.size)
+                                    base = img.convert("RGBA").copy()
+                                    overlay_rgba = overlay.convert("RGBA")
+                                    overlay_rgba.putalpha(120)
+                                    base.paste(overlay_rgba, (0, 0), overlay_rgba)
+                                    
+                                    # Display with prediction info
+                                    st.markdown(f"**{img_name}** — {pretty_label_img} ({confidence_img:.1%})")
+                                    st.image(
+                                        [img, base],
+                                        caption=["Original Image", "AI Heat Map"],
+                                        use_container_width=True,
+                                    )
+                                    
+                                    if img_idx < max_gradcam - 1:
+                                        st.divider()
+                                    
+                                    # Clean up memory
+                                    del arr, heat, colored, overlay, base, overlay_rgba
+                                    gc.collect()
+                                    
+                                except Exception as e:
+                                    st.warning(f"Could not generate visual insights for image {img_idx + 1}: {str(e)}")
+                                    continue
+                    except Exception as e:
+                        st.warning(f"Visual insights generation failed: {str(e)}. Predictions are still available above.")
 
                     # Guidance card
                     top_label = df.iloc[0]["top1"]
