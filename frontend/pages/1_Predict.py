@@ -145,6 +145,17 @@ def main() -> None:
                     st.info("This may be due to memory constraints. Try uploading fewer images or smaller file sizes.")
                     st.stop()
 
+                # Ensure classes list matches model output shape
+                model_output_size = probs.shape[1] if len(probs.shape) > 1 else len(probs[0])
+                if len(classes) != model_output_size:
+                    # Adjust classes to match model output
+                    if len(classes) < model_output_size:
+                        # Pad classes if model has more outputs
+                        classes = classes + [f"Class_{i}" for i in range(len(classes), model_output_size)]
+                    else:
+                        # Truncate classes if model has fewer outputs
+                        classes = classes[:model_output_size]
+
                 records = []
                 for i, p in enumerate(probs):
                     top3_idx = np.argsort(p)[-3:][::-1]
@@ -206,17 +217,35 @@ def main() -> None:
                 # Normalize all probabilities ONCE and store them for consistency
                 normalized_probs_list = []
                 for p in probs:
+                    # Ensure p has the correct length
+                    if len(p) != len(classes):
+                        # Truncate or pad to match classes length
+                        if len(p) > len(classes):
+                            p = p[:len(classes)]
+                        else:
+                            # Pad with zeros if model output is shorter (shouldn't happen, but safety)
+                            p = np.pad(p, (0, len(classes) - len(p)), mode='constant', constant_values=0.0)
                     normalized_p = np.array([normalize_confidence(float(prob)) for prob in p])
+                    # Double-check length
+                    if len(normalized_p) != len(classes):
+                        # Force match by truncating/padding
+                        if len(normalized_p) > len(classes):
+                            normalized_p = normalized_p[:len(classes)]
+                        else:
+                            normalized_p = np.pad(normalized_p, (0, len(classes) - len(normalized_p)), mode='constant', constant_values=0.0)
                     normalized_probs_list.append(normalized_p.tolist())
                 
                 # Store results in session state so they persist when switching images
+                # Ensure classes is stored as a list (not modified reference)
+                classes_final = list(classes) if isinstance(classes, list) else classes.tolist() if hasattr(classes, 'tolist') else classes
+                
                 st.session_state["_prediction_results"] = {
                     "df": df,
                     "probs": probs.tolist(),  # Raw probabilities
                     "normalized_probs": normalized_probs_list,  # Normalized probabilities (deterministic)
                     "images": images,
                     "uploaded_files": uploaded_files,
-                    "classes": classes,
+                    "classes": classes_final,  # Store adjusted classes
                 }
             
             # Display results if they exist (from button click or previous analysis)
@@ -233,6 +262,21 @@ def main() -> None:
                 images = result_data["images"]
                 uploaded_files = result_data["uploaded_files"]
                 classes = result_data["classes"]
+                
+                # Validate stored data consistency
+                if len(p_normalized_stored) > 0:
+                    expected_len = len(p_normalized_stored[0])
+                    # Ensure all stored probabilities have same length
+                    for i, norm_p in enumerate(p_normalized_stored):
+                        if len(norm_p) != expected_len:
+                            # Recalculate if corrupted
+                            p_normalized_stored[i] = np.array([normalize_confidence(float(prob)) for prob in probs[i]])
+                    # Ensure classes matches
+                    if len(classes) != expected_len:
+                        if len(classes) < expected_len:
+                            classes = list(classes) + [f"Class_{i}" for i in range(len(classes), expected_len)]
+                        else:
+                            classes = list(classes)[:expected_len]
                 
                 with right:
                     st.markdown("### Analysis Results")
@@ -264,9 +308,28 @@ def main() -> None:
 
                     # Human‑readable top prediction for the selected image
                     p_sel = probs[selected_idx]  # Raw probabilities for threshold checks
-                    p_normalized_sel = p_normalized_stored[selected_idx]  # Use stored normalized probabilities
+                    p_normalized_sel = np.array(p_normalized_stored[selected_idx])  # Ensure it's a numpy array
+                    
+                    # Ensure lengths match - critical for DataFrame creation
+                    if len(p_normalized_sel) != len(p_sel):
+                        # Recalculate if stored data is corrupted
+                        p_normalized_sel = np.array([normalize_confidence(float(prob)) for prob in p_sel])
+                    
+                    if len(p_normalized_sel) != len(classes):
+                        # Use the length of probabilities (model output) as truth
+                        # Limit classes to match or pad probabilities
+                        if len(p_normalized_sel) > len(classes):
+                            # Model has more outputs than classes - use what we have
+                            classes_limited = classes + [f"Class_{i}" for i in range(len(classes), len(p_normalized_sel))]
+                            classes = classes_limited
+                        else:
+                            # Model has fewer outputs - truncate classes
+                            classes = classes[:len(p_normalized_sel)]
+                    
                     top3_sel = np.argsort(p_sel)[-3:][::-1]  # Use raw for sorting (consistent)
                     top_idx_sel = int(top3_sel[0])
+                    # Ensure top_idx is within bounds
+                    top_idx_sel = min(top_idx_sel, len(classes) - 1)
                     raw_confidence_sel = float(p_sel[top_idx_sel])  # Raw confidence for threshold checks
                     
                     # Always show image preview regardless of match status
@@ -348,13 +411,24 @@ def main() -> None:
                             f"**Prediction:** {pretty_label}  •  **Confidence:** {confidence_sel:.1%}"
                         )
                         # Use stored normalized probabilities for chart (consistent values)
-                        chart_df = pd.DataFrame({"class": classes, "prob": p_normalized_sel})
-                        chart_df["prob"] = chart_df["prob"].astype(float)
-                        chart_df["class_display"] = chart_df["class"].str.replace("___", " → ").str.replace("_", " ")
-                        # Filter and sort
-                        chart_df = chart_df[chart_df["prob"] > 0.0001]
-                        chart_df = chart_df.sort_values("prob", ascending=False)
-                        chart_df = chart_df.head(3).reset_index(drop=True)  # Top 3 only
+                        # Ensure arrays are same length and properly formatted
+                        # At this point, classes and p_normalized_sel should already be the same length
+                        # but add safety check anyway
+                        min_len = min(len(classes), len(p_normalized_sel))
+                        if min_len == 0:
+                            st.warning("No prediction data available for this image.")
+                            chart_df = pd.DataFrame({"class": [], "prob": []})
+                        else:
+                            chart_df = pd.DataFrame({
+                                "class": classes[:min_len], 
+                                "prob": p_normalized_sel[:min_len].tolist() if isinstance(p_normalized_sel, np.ndarray) else list(p_normalized_sel[:min_len])
+                            })
+                            chart_df["prob"] = chart_df["prob"].astype(float)
+                            chart_df["class_display"] = chart_df["class"].str.replace("___", " → ").str.replace("_", " ")
+                            # Filter and sort
+                            chart_df = chart_df[chart_df["prob"] > 0.0001]
+                            chart_df = chart_df.sort_values("prob", ascending=False)
+                            chart_df = chart_df.head(3).reset_index(drop=True)  # Top 3 only
                         
                         if len(chart_df) > 0 and chart_df["prob"].sum() > 0:
                             st.markdown("#### Top 3 Predictions")
