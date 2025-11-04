@@ -18,7 +18,7 @@ from frontend.utils.model import get_paths, list_class_names, load_tf_model, pre
 from frontend.utils.guidance import GUIDANCE
 from frontend.utils.sidebar import render_sidebar
 from frontend.utils.ui import load_css
-
+# Main application code for Plant Disease Prediction Page
 
 
 def render_header() -> None:
